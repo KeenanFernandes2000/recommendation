@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "dev": "npx ts-node index.ts",
+    "dev": "bun run --watch index.ts",
     "seed": "npx ts-node seed-database.ts"
   },
   "author": "",
@@ -11,6 +11,7 @@
   "description": "",
   "devDependencies": {
     "@types/express": "^5.0.0",
+    "@types/multer": "^1.4.12",
     "@types/node": "^22.7.4",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.2"
@@ -24,6 +25,8 @@
     "express": "^4.21.0",
     "langchain": "^0.3.2",
     "mongodb": "^6.9.0",
+    "multer": "^1.4.5-lts.1",
+    "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   }
 }

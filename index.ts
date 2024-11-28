@@ -2,9 +2,23 @@ import "dotenv/config";
 import express, { Express, Request, Response } from "express";
 import { MongoClient } from "mongodb";
 import { callAgent } from "./agent";
+import multer from "multer";
 
 const app: Express = express();
+
+
+
 app.use(express.json());
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, "public/images/");
+  },
+  filename: function (req, file, cb) {
+    cb(null, file.originalname); // specify the filename for the uploaded file
+  },
+});
+const upload = multer({ storage: storage });
 
 // Initialize MongoDB client
 const client = new MongoClient(process.env.MONGODB_ATLAS_URI as string);
@@ -25,11 +39,13 @@ async function startServer() {
 
     // API endpoint to start a new conversation
     // curl -X POST -H "Content-Type: application/json" -d '{"message": "Build a team to make an iOS app, and tell me the talent gaps."}' http://localhost:3000/chat
-    app.post("/chat", async (req: Request, res: Response) => {
-      const initialMessage = req.body.message;
+    app.post("/chat", upload.single("image"), async (req: Request, res: Response) => {
+      const initialMessage = req.body.userCheck;
+      const image = req.file;
+      const path = image?.path;
       const threadId = Date.now().toString(); // Simple thread ID generation
       try {
-        const response = await callAgent(client, initialMessage, threadId);
+        const response = await callAgent(client, initialMessage, threadId, path || null);
         res.json({ threadId, response });
       } catch (error) {
         console.error("Error starting conversation:", error);
@@ -43,7 +59,7 @@ async function startServer() {
       const { threadId } = req.params;
       const { message } = req.body;
       try {
-        const response = await callAgent(client, message, threadId);
+        const response = await callAgent(client, message, threadId, null);
         res.json({ response });
       } catch (error) {
         console.error("Error in chat:", error);

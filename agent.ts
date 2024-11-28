@@ -1,5 +1,6 @@
 import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
-import { AIMessage, BaseMessage, HumanMessage } from "@langchain/core/messages";
+import { ChatAnthropic } from "@langchain/anthropic";
+import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import {
   ChatPromptTemplate,
   MessagesPlaceholder,
@@ -13,11 +14,13 @@ import { MongoDBAtlasVectorSearch } from "@langchain/mongodb";
 import { MongoClient } from "mongodb";
 import { z } from "zod";
 import "dotenv/config";
+import fs from "fs";
 
 export async function callAgent(
   client: MongoClient,
   query: string,
-  thread_id: string
+  thread_id: string,
+  image_path: string | null
 ) {
   // Define the MongoDB database and collection
   const dbName = "prod_data";
@@ -33,7 +36,7 @@ export async function callAgent(
 
   // Define the tools for the agent to use
   const prodLookupTool = tool(
-    async ({ query, n = 10 }) => {
+    async ({ query, n = 4 }) => {
       console.log("Product lookup tool called");
 
       const dbConfig = {
@@ -73,8 +76,73 @@ export async function callAgent(
 
   const model = new ChatOpenAI({
     modelName: "gpt-4o-mini",
-    temperature: 0.2,
+    temperature: 0,
   }).bindTools(tools);
+
+  const vision = new ChatAnthropic({
+    model: "claude-3-5-sonnet-20241022",
+  });
+
+
+  if (image_path) {
+    console.log("Image path provided");
+    const file = fs.readFileSync(image_path);
+
+    const base64_image = Buffer.from(file).toString("base64");
+
+    const system_message = new SystemMessage({
+      content: "You are an AI Dermatologist and Skincare Expert specializing in providing tailored skincare advice based on image analysis. Your task is to analyze the provided image description and generate a structured response detailing your findings.",
+    });
+
+    const message = new HumanMessage({
+      content: [
+        {
+          type: "text",
+          text: `You are an AI Dermatologist and Skincare Expert specializing in providing tailored skincare advice based on image analysis. Your task is to analyze the provided image description and generate a structured response detailing your findings.
+
+Please follow these steps to complete your analysis:
+
+1. Carefully review the image.
+2. Use your expertise to determine the skin condition, skin type, visible conditions, severity, and affected areas based on the information given.
+3. Before formulating your final response, wrap your observations and reasoning inside <dermatological_assessment> tags. This step is crucial for ensuring a thorough and accurate assessment. In this section:
+   - List out key observations from the image analysis, categorizing them into skin type, visible conditions, severity, and affected areas.
+   - Consider potential alternative diagnoses and explain why they were ruled out.
+   - It's OK for this section to be quite long.
+4. After your assessment, provide your findings in the specified JSON format.
+
+Important Instructions:
+- Always provide a diagnosis based on the image analysis.
+- Strictly adhere to the requested output format.
+- Do not include any additional text or explanations outside of the JSON structure.
+
+The required output format is as follows:
+
+{
+  "skin_analysis": {
+    "skin_type": "",
+    "visible_conditions": {
+      "primary": "",
+      "secondary": "",
+      "other_observations": []
+    }
+  },
+  "severity": "",
+  "affected_areas": []
+}
+
+Please ensure that all fields are filled appropriately based on your analysis. If a field is not applicable, use an empty string or empty array as appropriate.
+
+Begin your response with your dermatological assessment, followed by the JSON output.`,
+        },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/jpeg;base64," + base64_image },
+        },
+      ],
+    });
+    const response = await vision.invoke([system_message, message]);
+    console.log(response.content);
+  }
 
   // Define the function that determines whether to continue or not
   function shouldContinue(state: typeof GraphState.State) {
@@ -100,7 +168,7 @@ export async function callAgent(
     ]);
 
     const formattedPrompt = await prompt.formatMessages({
-      system_message: "You are helpful Product Recommendation Chatbot Agent.",
+      system_message: "You are an AI Dermatologist and Skincare Expert specializing in providing tailored skincare advice and product recommendations. Use your knowledge of dermatology and skincare to understand the user's concerns, diagnose potential skin conditions, and recommend suitable products or routines. Always aim to give evidence-based and personalized advice that enhances the user’s skincare journey.",
       time: new Date().toISOString(),
       tool_names: tools.map((tool) => tool.name).join(", "),
       messages: state.messages,
