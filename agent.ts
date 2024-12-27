@@ -90,7 +90,7 @@ export async function callAgent(
   }).bindTools(tools);
 
   const vision = new ChatAnthropic({
-    model: "claude-3-5-sonnet-20241022",
+    model: "claude-3-opus-20240229",
   });
 
   if (image_path) {
