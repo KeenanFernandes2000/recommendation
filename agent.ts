@@ -27,10 +27,23 @@ export async function callAgent(
   const db = client.db(dbName);
   const collection = db.collection("products");
 
+  // Parse user responses
+  const userResponses = JSON.parse(query);
+
+  // Store analysis results
+  let imageAnalysis: string | null = null;
+  let combinedAnalysis = "";
+
   // Define the graph state
   const GraphState = Annotation.Root({
     messages: Annotation<BaseMessage[]>({
       reducer: (x, y) => x.concat(y),
+    }),
+    imageAnalysis: Annotation<string | null>({
+      reducer: (_, y) => y,
+    }),
+    userResponses: Annotation<any>({
+      reducer: (_, y) => y,
     }),
   });
 
@@ -46,7 +59,6 @@ export async function callAgent(
         embeddingKey: "embedding",
       };
 
-      // Initialize vector store
       const vectorStore = new MongoDBAtlasVectorSearch(
         new OpenAIEmbeddings(),
         dbConfig
@@ -70,8 +82,6 @@ export async function callAgent(
   );
 
   const tools = [prodLookupTool];
-
-  // We can extract the state typing via `GraphState.State`
   const toolNode = new ToolNode<typeof GraphState.State>(tools);
 
   const model = new ChatOpenAI({
@@ -83,11 +93,9 @@ export async function callAgent(
     model: "claude-3-5-sonnet-20241022",
   });
 
-
   if (image_path) {
-    console.log("Image path provided");
+    console.log("Processing image analysis...");
     const file = fs.readFileSync(image_path);
-
     const base64_image = Buffer.from(file).toString("base64");
 
     const system_message = new SystemMessage({
@@ -140,8 +148,10 @@ Begin your response with your dermatological assessment, followed by the JSON ou
         },
       ],
     });
+
     const response = await vision.invoke([system_message, message]);
-    console.log(response.content);
+    imageAnalysis = String(response.content);
+    console.log("Image analysis completed:", imageAnalysis);
   }
 
   // Define the function that determines whether to continue or not
@@ -149,11 +159,9 @@ Begin your response with your dermatological assessment, followed by the JSON ou
     const messages = state.messages;
     const lastMessage = messages[messages.length - 1] as AIMessage;
 
-    // If the LLM makes a tool call, then we route to the "tools" node
     if (lastMessage.tool_calls?.length) {
       return "tools";
     }
-    // Otherwise, we stop (reply to the user)
     return "__end__";
   }
 
@@ -162,24 +170,41 @@ Begin your response with your dermatological assessment, followed by the JSON ou
     const prompt = ChatPromptTemplate.fromMessages([
       [
         "system",
-        `You are a helpful AI assistant, collaborating with other assistants. Use the provided tools to progress towards answering the question. If you are unable to fully answer, that's OK, another assistant with different tools will help where you left off. Execute what you can to make progress. If you or any of the other assistants have the final answer or deliverable, prefix your response with FINAL ANSWER so the team knows to stop. You have access to the following tools: {tool_names}.\n{system_message}\nCurrent time: {time}.`,
+        `You are an AI Skincare Expert specializing in providing personalized skincare recommendations. Your task is to analyze both the user's questionnaire responses and image analysis (if available) to provide tailored product recommendations.
+
+Current Context:
+- User Questionnaire: {user_responses}
+- Image Analysis: {image_analysis}
+
+Based on this information:
+1. Analyze both the questionnaire responses and image analysis
+2. Identify the key skincare needs and concerns
+3. Use the product lookup tool to find suitable products
+4. Provide a comprehensive recommendation with explanation
+
+Format your response as follows:
+1. Brief analysis of the user's skin condition and needs
+2. Product recommendations with explanations for each
+3. Usage instructions and any additional advice
+
+You have access to the following tools: {tool_names}
+Current time: {time}`,
       ],
       new MessagesPlaceholder("messages"),
     ]);
 
     const formattedPrompt = await prompt.formatMessages({
-      system_message: "You are an AI Dermatologist and Skincare Expert specializing in providing tailored skincare advice and product recommendations. Use your knowledge of dermatology and skincare to understand the user's concerns, diagnose potential skin conditions, and recommend suitable products or routines. Always aim to give evidence-based and personalized advice that enhances the user’s skincare journey.",
-      time: new Date().toISOString(),
+      user_responses: JSON.stringify(userResponses, null, 2),
+      image_analysis: imageAnalysis || "No image analysis available",
       tool_names: tools.map((tool) => tool.name).join(", "),
+      time: new Date().toISOString(),
       messages: state.messages,
     });
 
     const result = await model.invoke(formattedPrompt);
-
     return { messages: [result] };
   }
 
-  // Define a new graph
   const workflow = new StateGraph(GraphState)
     .addNode("agent", callModel)
     .addNode("tools", toolNode)
@@ -187,23 +212,17 @@ Begin your response with your dermatological assessment, followed by the JSON ou
     .addConditionalEdges("agent", shouldContinue)
     .addEdge("tools", "agent");
 
-  // Initialize the MongoDB memory to persist state between graph runs
   const checkpointer = new MongoDBSaver({ client, dbName });
-
-  // This compiles it into a LangChain Runnable.
-  // Note that we're passing the memory when compiling the graph
   const app = workflow.compile({ checkpointer });
 
-  // Use the Runnable
   const finalState = await app.invoke(
     {
-      messages: [new HumanMessage(query)],
+      messages: [new HumanMessage("Please provide skincare recommendations based on my responses and image.")],
+      imageAnalysis: imageAnalysis,
+      userResponses: userResponses,
     },
     { recursionLimit: 15, configurable: { thread_id: thread_id } }
   );
-
-  // console.log(JSON.stringify(finalState.messages, null, 2));
-  console.log(finalState.messages[finalState.messages.length - 1].content);
 
   return finalState.messages[finalState.messages.length - 1].content;
 }

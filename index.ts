@@ -40,12 +40,34 @@ async function startServer() {
     // API endpoint to start a new conversation
     // curl -X POST -H "Content-Type: application/json" -d '{"message": "Build a team to make an iOS app, and tell me the talent gaps."}' http://localhost:3000/chat
     app.post("/chat", upload.single("image"), async (req: Request, res: Response) => {
-      const initialMessage = req.body.userCheck;
+      const {
+        skinType,
+        mainConcerns,
+        breakoutFrequency,
+        productSensitivity,
+        skinCareRoutine
+      } = req.body;
+
       const image = req.file;
       const path = image?.path;
-      const threadId = Date.now().toString(); // Simple thread ID generation
+      const threadId = Date.now().toString();
+
+      // Combine questionnaire responses into a structured format
+      const userResponses = {
+        skinType,
+        mainConcerns,
+        breakoutFrequency,
+        productSensitivity,
+        skinCareRoutine
+      };
+
       try {
-        const response = await callAgent(client, initialMessage, threadId, path || null);
+        const response = await callAgent(
+          client,
+          JSON.stringify(userResponses),
+          threadId,
+          path || null
+        );
         res.json({ threadId, response });
       } catch (error) {
         console.error("Error starting conversation:", error);
